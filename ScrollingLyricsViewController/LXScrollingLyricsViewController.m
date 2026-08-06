@@ -253,13 +253,16 @@
 	    dispatch_async(queue, ^{
 		    NSURLSessionConfiguration* defaultSessionConfiguration = [NSURLSessionConfiguration defaultSessionConfiguration];
     	    NSURLSession* defaultSession = [NSURLSession sessionWithConfiguration: defaultSessionConfiguration];
-		    NSString* escapedSong = [song stringByAddingPercentEncodingWithAllowedCharacters: [NSCharacterSet URLHostAllowedCharacterSet]];
-            NSString* escapedArtist = [artist stringByAddingPercentEncodingWithAllowedCharacters: [NSCharacterSet URLHostAllowedCharacterSet]];
-            
-            // Please don't use this API for other projects :)
-		    NSURL* urlPleaseDontCopyThanks = [NSURL URLWithString: [NSString stringWithFormat: @"https://prv.textyl.co/api/staticlyrics?name=%@&artist=%@&pleasedontusethisapiwithoutpermission=thanks", escapedSong, escapedArtist]];
-            
-		    NSURLSessionDataTask* dataTask = [defaultSession dataTaskWithURL: urlPleaseDontCopyThanks completionHandler:^(NSData* data, NSURLResponse* response, NSError* error) {
+		    NSString* escapedSong = [song stringByAddingPercentEncodingWithAllowedCharacters: [NSCharacterSet URLQueryAllowedCharacterSet]];
+            NSString* escapedArtist = [artist stringByAddingPercentEncodingWithAllowedCharacters: [NSCharacterSet URLQueryAllowedCharacterSet]];
+
+		    // Previously used https://prv.textyl.co, which has been discontinued (502 / expired cert).
+		    // Switched to LRCLIB (https://lrclib.net), a free, actively maintained, keyless synced-lyrics API.
+		    NSURL* url = [NSURL URLWithString: [NSString stringWithFormat: @"https://lrclib.net/api/get?track_name=%@&artist_name=%@", escapedSong, escapedArtist]];
+		    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL: url];
+		    [request setValue: @"Lyrication (jailbreak tweak; +https://github.com/thatmarcel/lyrication)" forHTTPHeaderField: @"User-Agent"];
+
+		    NSURLSessionDataTask* dataTask = [defaultSession dataTaskWithRequest: request completionHandler:^(NSData* data, NSURLResponse* response, NSError* error) {
 			    dispatch_async(dispatch_get_main_queue(), ^{
                     if (![[self lastSong] isEqual: [NSString stringWithFormat: @"%@%@%@",  song, @" ", artist]]) {
 					    return;
@@ -277,9 +280,20 @@
 					    return;
 				    }
 
-                    NSString* staticLyrics = [[NSString alloc] initWithData: data encoding: NSUTF8StringEncoding];
+				    NSError* jsonError;
+				    NSDictionary* json = (NSDictionary*) [NSJSONSerialization JSONObjectWithData: data options: kNilOptions error: &jsonError];
+				    if (jsonError != nil || ![json isKindOfClass: [NSDictionary class]]) {
+					    [self showNoLyricsAvailable];
+					    return;
+				    }
 
-                    self.staticLyricsTextView.text = staticLyrics;
+				    NSString* plainLyrics = [json objectForKey: @"plainLyrics"];
+				    if (plainLyrics == nil || [plainLyrics isEqual: [NSNull null]] || [plainLyrics length] < 1) {
+					    [self showNoLyricsAvailable];
+					    return;
+				    }
+
+                    self.staticLyricsTextView.text = plainLyrics;
                     self.staticLyricsTextView.scrollEnabled = false;
                     self.staticLyricsTextView.scrollEnabled = true;
                 });
@@ -459,62 +473,106 @@
         }
 
         dispatch_queue_t queue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0ul);
-	    dispatch_async(queue, ^{
-		    NSURLSessionConfiguration* defaultSessionConfiguration = [NSURLSessionConfiguration defaultSessionConfiguration];
-    	    NSURLSession* defaultSession = [NSURLSession sessionWithConfiguration: defaultSessionConfiguration];
-            NSString* escapedSong = [song stringByAddingPercentEncodingWithAllowedCharacters: [NSCharacterSet URLHostAllowedCharacterSet]];
-            NSString* escapedArtist = [artist stringByAddingPercentEncodingWithAllowedCharacters: [NSCharacterSet URLHostAllowedCharacterSet]];
-            
-		    // Please don't use this API for other projects :)
-            NSURL* urlPleaseDontCopyThanks = [NSURL URLWithString: [NSString stringWithFormat: @"https://prv.textyl.co/api/lyrics?name=%@&artist=%@&pleasedontusethisapiwithoutpermission=thanks", escapedSong, escapedArtist]];
-            
-		    NSURLSessionDataTask* dataTask = [defaultSession dataTaskWithURL: urlPleaseDontCopyThanks completionHandler: ^(NSData* data, NSURLResponse* response, NSError* error) {
-			    dispatch_async(dispatch_get_main_queue(), ^{
-				    if (![[self lastSong] isEqual: [NSString stringWithFormat: @"%@%@%@",  song, @" ", artist]]) {
-					    return;
-				    }
+        dispatch_async(queue, ^{
+            NSURLSessionConfiguration* defaultSessionConfiguration = [NSURLSessionConfiguration defaultSessionConfiguration];
+            NSURLSession* defaultSession = [NSURLSession sessionWithConfiguration: defaultSessionConfiguration];
+            NSString* escapedSong = [song stringByAddingPercentEncodingWithAllowedCharacters: [NSCharacterSet URLQueryAllowedCharacterSet]];
+            NSString* escapedArtist = [artist stringByAddingPercentEncodingWithAllowedCharacters: [NSCharacterSet URLQueryAllowedCharacterSet]];
 
-				    NSInteger statusCode = 0;
+            // Previously used https://prv.textyl.co, which has been discontinued (502 / expired cert).
+            // Switched to LRCLIB (https://lrclib.net), a free, actively maintained, keyless synced-lyrics API.
+            NSURL* url = [NSURL URLWithString: [NSString stringWithFormat: @"https://lrclib.net/api/get?track_name=%@&artist_name=%@", escapedSong, escapedArtist]];
+            NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL: url];
+            [request setValue: @"Lyrication (jailbreak tweak; +https://github.com/thatmarcel/lyrication)" forHTTPHeaderField: @"User-Agent"];
 
-				    if ([response isKindOfClass: [NSHTTPURLResponse class]]) {
-    				    NSHTTPURLResponse* httpResponse = (NSHTTPURLResponse*) response;
-    				    statusCode = httpResponse.statusCode;
-				    }
+            NSURLSessionDataTask* dataTask = [defaultSession dataTaskWithRequest: request completionHandler: ^(NSData* data, NSURLResponse* response, NSError* error) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    if (![[self lastSong] isEqual: [NSString stringWithFormat: @"%@%@%@",  song, @" ", artist]]) {
+                        return;
+                    }
 
-				    if (statusCode != 200 || data == nil) {
-					    [self showNoLyricsAvailable];
-					    return;
-				    }
+                    NSInteger statusCode = 0;
 
-				    NSError* serializationError;
-				    NSArray* json = (NSArray*) [NSJSONSerialization JSONObjectWithData: data options: kNilOptions error: &serializationError];
-				    if (serializationError != nil || [json count] < 1) {
-					    [self showNoLyricsAvailable];
-					    return;
-				    }
+                    if ([response isKindOfClass: [NSHTTPURLResponse class]]) {
+                        NSHTTPURLResponse* httpResponse = (NSHTTPURLResponse*) response;
+                        statusCode = httpResponse.statusCode;
+                    }
 
-				    NSMutableArray* items = [NSMutableArray array];
+                    if (statusCode != 200 || data == nil) {
+                        [self showNoLyricsAvailable];
+                        return;
+                    }
 
-	                for (NSDictionary* dict in json) {
-		                NSString* line = [dict objectForKey: @"lyrics"];
-		                NSNumber* seconds = [NSNumber numberWithDouble: [[dict objectForKey: @"seconds"] doubleValue]];
+                    NSError* jsonError;
+                    NSDictionary* json = (NSDictionary*) [NSJSONSerialization JSONObjectWithData: data options: kNilOptions error: &jsonError];
+                    if (jsonError != nil || ![json isKindOfClass: [NSDictionary class]]) {
+                        [self showNoLyricsAvailable];
+                        return;
+                    }
 
-		                NSDictionary* newDict = @{ @"lyrics": line, @"seconds": seconds };
-		                [items addObject: newDict];
-	                }
+                    NSString* syncedLyrics = [json objectForKey: @"syncedLyrics"];
+                    if (syncedLyrics == nil || [syncedLyrics isEqual: [NSNull null]] || [syncedLyrics length] < 1) {
+                        [self showNoLyricsAvailable];
+                        return;
+                    }
+
+                    NSArray* items = [self parseSyncedLyrics: syncedLyrics];
+                    if ([items count] < 1) {
+                        [self showNoLyricsAvailable];
+                        return;
+                    }
 
                     self.tableView.hidden = false;
                     self.staticLyricsTextView.hidden = true;
 
-	                [self setLyrics: items];
+                    [self setLyrics: items];
                     [self.tableView reloadData];
                     [self updateLyricsForProgress: self.playbackProgress];
                     [self.tableView reloadData];
-			    });
-    	    }];
-		    [dataTask resume];
-	    });
+                });
+            }];
+            [dataTask resume];
+        });
     }
+
+    // Parses an LRC-formatted synced lyrics string (e.g. "[00:12.34]Some line\n[00:15.67]Next line")
+    // into an array of @{ @"lyrics": NSString*, @"seconds": NSNumber* } dictionaries.
+    - (NSArray*) parseSyncedLyrics:(NSString*)syncedLyrics {
+        NSMutableArray *items = [NSMutableArray array];
+
+        NSError *regexError;
+        NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern: @"^\\[(\\d{2}):(\\d{2})\\.(\\d{2,3})\\](.*)$"
+                                                                                options: NSRegularExpressionAnchorsMatchLines
+                                                                                  error: &regexError];
+        if (regexError != nil) {
+            return items;
+        }
+
+        NSArray<NSString*> *lines = [syncedLyrics componentsSeparatedByString: @"\n"];
+
+        for (NSString *rawLine in lines) {
+            NSTextCheckingResult *match = [regex firstMatchInString: rawLine
+                                                             options: 0
+                                                               range: NSMakeRange(0, [rawLine length])];
+            if (match == nil || [match numberOfRanges] < 5) {
+                continue;
+            }
+
+            NSInteger minutes = [[rawLine substringWithRange: [match rangeAtIndex: 1]] integerValue];
+            NSInteger seconds = [[rawLine substringWithRange: [match rangeAtIndex: 2]] integerValue];
+            NSString *fractionStr = [rawLine substringWithRange: [match rangeAtIndex: 3]];
+            double fraction = [fractionStr doubleValue] / pow(10, [fractionStr length]);
+            NSString *text = [rawLine substringWithRange: [match rangeAtIndex: 4]];
+
+            double totalSeconds = (minutes * 60) + seconds + fraction;
+
+            NSDictionary *newDict = @{ @"lyrics": text, @"seconds": [NSNumber numberWithDouble: totalSeconds] };
+            [items addObject: newDict];
+        }
+
+        return items;
+    }
+
 
     - (void) showNoLyricsAvailable {
         NSMutableArray* items = [NSMutableArray array];

@@ -75,6 +75,8 @@
     - (void) fetchCurrentPlayback;
     // Fetches the lyrics from the server
     - (void) fetchLyricsForSong:(NSString*)song byArtist:(NSString*)artist;
+    // Parses LRC-formatted synced lyrics text into an array of {lyrics, seconds} dictionaries
+    - (NSArray*) parseSyncedLyrics:(NSString*)syncedLyrics;
     // Updates the current lyrics line and does the animation / scrolling
     - (void) updateLyricsForProgress:(double)progress;
     // Just makes "No lyrics available" the only lyrics line
