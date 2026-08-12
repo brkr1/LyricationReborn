@@ -24,3 +24,9 @@ You also need to have the [iOS 13.7 SDK](https://github.com/theos/sdks/tree/mast
 
 
 (This tweak started as a [tweak bounty](https://www.reddit.com/r/TweakBounty/comments/gl5m7w/30ios133_spotify_lyrics/) for Spotify and lot of the code for this tweak was written when I was still learning the basics of tweak development and Objective-C so don't judge the code quality too hard :p)
+
+## Support
+
+If you like my tweaks, consider buying me a coffee:
+
+<a href="https://buymeacoffee.com/brkr1" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="41" width="174"></a>
