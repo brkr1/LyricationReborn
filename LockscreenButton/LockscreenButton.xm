@@ -751,25 +751,51 @@ bool lx16_activity_view_is_now_playing_view(CSActivityItemContentView* questione
     return isNowPlayingView;
 }
 
-// The leftmost native transport button in the row (rewind, on every layout
-// seen so far).
+// Recursively searches `view`'s descendants (skipping our own LX button) for
+// the leftmost native transport button. A debug dump confirmed the real
+// transport buttons aren't direct children of the content view - they're
+// nested inside a single wrapping UIView one level deeper - so this walks
+// the whole subtree instead of just the immediate children. Frames are
+// compared in `container`'s own coordinate space (via convertRect:toView:)
+// so nesting depth doesn't skew which candidate looks "leftmost".
+void lx16_searchLeftmostNativeControlButton(UIView *view, UIView *container, UIButton **outButton, CGFloat *minX) {
+    for (UIView *subview in [view.subviews copy]) {
+        if (subview == lyricsButton) continue;
+        if ([subview isKindOfClass: [UIButton class]]) {
+            UIButton *button = (UIButton *) subview;
+            NSString *title = [button currentTitle];
+            if (![title isEqualToString: @"LX"] && ![title isEqualToString: @"♥"] && ![title isEqualToString: @"♡"] && !CGRectIsEmpty(button.bounds)) {
+                CGRect frameInContainer = [button convertRect: button.bounds toView: container];
+                if (CGRectGetMinX(frameInContainer) < *minX) {
+                    *minX = CGRectGetMinX(frameInContainer);
+                    *outButton = button;
+                }
+            }
+        }
+        lx16_searchLeftmostNativeControlButton(subview, container, outButton, minX);
+    }
+}
+
 UIButton *lx16_leftmostNativeControlButton(UIView *container) {
     UIButton *leftmost = nil;
     CGFloat minX = CGFLOAT_MAX;
-    NSArray<UIView *> *subviewsSnapshot = [container.subviews copy];
-    for (UIView *subview in subviewsSnapshot) {
-        if (subview == lyricsButton) continue;
-        if (![subview isKindOfClass: [UIButton class]]) continue;
-        UIButton *button = (UIButton *) subview;
-        NSString *title = [button currentTitle];
-        if ([title isEqualToString: @"LX"] || [title isEqualToString: @"♥"] || [title isEqualToString: @"♡"]) continue;
-        if (CGRectIsEmpty(button.frame)) continue;
-        if (CGRectGetMinX(button.frame) < minX) {
-            minX = CGRectGetMinX(button.frame);
-            leftmost = button;
-        }
-    }
+    lx16_searchLeftmostNativeControlButton(container, container, &leftmost, &minX);
     return leftmost;
+}
+
+// Full recursive subtree dump for the debug log - same technique that found
+// SBSystemApertureContainerView for IslandAura's live-tracking fix.
+void lx16_dumpViewTree(UIView *view, UIView *container, NSMutableString *dump, NSInteger depth) {
+    for (UIView *subview in [view.subviews copy]) {
+        NSString *indent = [@"" stringByPaddingToLength: depth * 2 withString: @" " startingAtIndex: 0];
+        CGRect frameInContainer = [subview convertRect: subview.bounds toView: container];
+        [dump appendFormat: @"%@%@ frame=%@ frameInContainer=%@", indent, NSStringFromClass([subview class]), NSStringFromCGRect(subview.frame), NSStringFromCGRect(frameInContainer)];
+        if ([subview isKindOfClass: [UIButton class]]) {
+            [dump appendFormat: @" title=%@", [(UIButton *) subview currentTitle]];
+        }
+        [dump appendString: @"\n"];
+        lx16_dumpViewTree(subview, container, dump, depth + 1);
+    }
 }
 
 // Pins LX's vertical center to the real transport button's own centerYAnchor
@@ -789,13 +815,7 @@ void lx16_repinLyricsButtonVertically(UIView *container) {
 
     if (lx16_debugLoggingEnabled()) {
         NSMutableString *dump = [NSMutableString stringWithFormat: @"repinLyricsButtonVertically: container=%@ bounds=%@\n", NSStringFromClass([container class]), NSStringFromCGRect(container.bounds)];
-        for (UIView *subview in [container.subviews copy]) {
-            [dump appendFormat: @"  subview class=%@ frame=%@", NSStringFromClass([subview class]), NSStringFromCGRect(subview.frame)];
-            if ([subview isKindOfClass: [UIButton class]]) {
-                [dump appendFormat: @" title=%@", [(UIButton *) subview currentTitle]];
-            }
-            [dump appendString: @"\n"];
-        }
+        lx16_dumpViewTree(container, container, dump, 1);
         [dump appendFormat: @"nativeButton=%@ frame=%@ alreadyPinned=%d\n", nativeButton, NSStringFromCGRect(nativeButton.frame), (nativeButton && lx16_lyricsButtonPinnedNativeButton == nativeButton)];
         lx16_log(@"%@", dump);
     }
