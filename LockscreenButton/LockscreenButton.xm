@@ -679,6 +679,8 @@ UILongPressGestureRecognizer *flowLongPressGestureRecognizer;
 // iOS 16
 
 NSLayoutConstraint* lx16_lyricsButtonBottomConstraint;
+NSLayoutConstraint* lx16_lyricsButtonCenterYConstraint;
+__weak UIButton* lx16_lyricsButtonPinnedNativeButton;
 
 @interface CSListItemActivityProvider: NSObject
     - (NSDictionary*) activityItemsByBundleId;
@@ -718,6 +720,79 @@ bool lx16_activity_view_is_now_playing_view(CSActivityItemContentView* questione
     return isNowPlayingView;
 }
 
+// The leftmost native transport button in the row (rewind, on every layout
+// seen so far).
+UIButton *lx16_leftmostNativeControlButton(UIView *container) {
+    UIButton *leftmost = nil;
+    CGFloat minX = CGFLOAT_MAX;
+    NSArray<UIView *> *subviewsSnapshot = [container.subviews copy];
+    for (UIView *subview in subviewsSnapshot) {
+        if (subview == lyricsButton) continue;
+        if (![subview isKindOfClass: [UIButton class]]) continue;
+        UIButton *button = (UIButton *) subview;
+        NSString *title = [button currentTitle];
+        if ([title isEqualToString: @"LX"] || [title isEqualToString: @"♥"] || [title isEqualToString: @"♡"]) continue;
+        if (CGRectIsEmpty(button.frame)) continue;
+        if (CGRectGetMinX(button.frame) < minX) {
+            minX = CGRectGetMinX(button.frame);
+            leftmost = button;
+        }
+    }
+    return leftmost;
+}
+
+// Pins LX's vertical center to the real transport button's own centerYAnchor
+// whenever that button can be found, so it tracks any future height change
+// (AirPlay's volume bar, NextUp 3's row, a Spotify layout update) instead of
+// guessing a fixed offset for each cause individually - the >= 170 threshold
+// below was calibrated for AirPlay specifically and broke the moment
+// NextUp 3 grew the container for a different reason. Only falls back to
+// that guess while no native button can be found yet (e.g. the very first
+// layout pass).
+void lx16_repinLyricsButtonVertically(UIView *container) {
+    if (!lyricsButton || ![container.subviews containsObject: lyricsButton]) {
+        return;
+    }
+
+    UIButton *nativeButton = lx16_leftmostNativeControlButton(container);
+
+    if (nativeButton) {
+        if (lx16_lyricsButtonCenterYConstraint && lx16_lyricsButtonPinnedNativeButton == nativeButton) {
+            return;
+        }
+        if (lx16_lyricsButtonBottomConstraint) {
+            lx16_lyricsButtonBottomConstraint.active = false;
+            lx16_lyricsButtonBottomConstraint = nil;
+        }
+        if (lx16_lyricsButtonCenterYConstraint) {
+            lx16_lyricsButtonCenterYConstraint.active = false;
+        }
+        lx16_lyricsButtonCenterYConstraint = [lyricsButton.centerYAnchor constraintEqualToAnchor: nativeButton.centerYAnchor];
+        lx16_lyricsButtonCenterYConstraint.active = true;
+        lx16_lyricsButtonPinnedNativeButton = nativeButton;
+        return;
+    }
+
+    if (!lx16_lyricsButtonBottomConstraint) {
+        lx16_lyricsButtonBottomConstraint = [lyricsButton.bottomAnchor constraintEqualToAnchor: container.bottomAnchor constant: -15];
+        lx16_lyricsButtonBottomConstraint.active = true;
+    }
+    // If the view is higher due to an AirPlay volume bar,
+    // we need to move the button up so it doesn't overlap
+    lx16_lyricsButtonBottomConstraint.constant = (container.bounds.size.height >= 170) ? -47 : -15;
+}
+
+// Must run wherever lyricsButton itself is torn down (not just moved) - a
+// stale lx16_lyricsButtonPinnedNativeButton would otherwise make the repin
+// guard above think a freshly recreated button (after leaving and returning
+// to the now-playing view) is already correctly pinned, when the constraint
+// it's comparing against still belongs to the old, gone button.
+void lx16_resetLyricsButtonPositionState(void) {
+    lx16_lyricsButtonBottomConstraint = nil;
+    lx16_lyricsButtonCenterYConstraint = nil;
+    lx16_lyricsButtonPinnedNativeButton = nil;
+}
+
 %hook CSActivityItemContentView
 
     %new
@@ -726,48 +801,32 @@ bool lx16_activity_view_is_now_playing_view(CSActivityItemContentView* questione
 
         [presenter present];
     }
-    
+
     - (void) setFrame:(CGRect)newFrame {
         %orig;
-        
-        if (lyricsButton && [self.subviews containsObject: lyricsButton]) {
-            if (lx16_lyricsButtonBottomConstraint) {
-                // If the view is higher due to an AirPlay volume bar,
-                // we need to move the button up so it doesn't overlap
-                if (newFrame.size.height >= 170) {
-                    lx16_lyricsButtonBottomConstraint.constant = -47;
-                } else if (newFrame.size.height >= 120) {
-                    lx16_lyricsButtonBottomConstraint.constant = -15;
-                }
-            }
-        }
+
+        lx16_repinLyricsButtonVertically(self);
     }
-    
+
     - (void) setBounds:(CGRect)newBounds {
         %orig;
-        
-        if (lyricsButton && [self.subviews containsObject: lyricsButton]) {
-            if (lx16_lyricsButtonBottomConstraint) {
-                // If the view is higher due to an AirPlay volume bar,
-                // we need to move the button up so it doesn't overlap
-                if (newBounds.size.height >= 170) {
-                    lx16_lyricsButtonBottomConstraint.constant = -47;
-                } else if (newBounds.size.height >= 120) {
-                    lx16_lyricsButtonBottomConstraint.constant = -15;
-                }
-            }
-        }
+
+        lx16_repinLyricsButtonVertically(self);
     }
-    
+
     - (void) layoutSubviews {
         %orig;
-        
+
         BOOL isNowPlayingView = lx16_activity_view_is_now_playing_view(self);
-        
+
         if (!isNowPlayingView && lyricsButton && [self.subviews containsObject: lyricsButton]) {
             [lyricsButton removeFromSuperview];
             lyricsButton = nil;
+            lx16_resetLyricsButtonPositionState();
+            return;
         }
+
+        lx16_repinLyricsButtonVertically(self);
     }
 
     - (void) didMoveToWindow {
@@ -787,6 +846,7 @@ bool lx16_activity_view_is_now_playing_view(CSActivityItemContentView* questione
                 if (lyricsButton && [self.subviews containsObject: lyricsButton]) {
                     [lyricsButton removeFromSuperview];
                     lyricsButton = nil;
+                    lx16_resetLyricsButtonPositionState();
                 }
                 
                 return;
@@ -794,50 +854,34 @@ bool lx16_activity_view_is_now_playing_view(CSActivityItemContentView* questione
             
             if (lyricsButton) {
                 if ([self.subviews containsObject: lyricsButton]) {
-                    if (lx16_lyricsButtonBottomConstraint) {
-                        // If the view is higher due to an AirPlay volume bar,
-                        // we need to move the button up so it doesn't overlap
-                        if (self.bounds.size.height >= 170) {
-                            lx16_lyricsButtonBottomConstraint.constant = -47;
-                        } else if (self.bounds.size.height >= 120) {
-                            lx16_lyricsButtonBottomConstraint.constant = -15;
-                        }
-                    }
-                    
+                    lx16_repinLyricsButtonVertically(self);
                     return;
                 }
-                
+
                 @try {
                     if (lyricsButton.superview) {
                         [lyricsButton removeFromSuperview];
                     }
                 } @catch (id ignored) { }
-                
+
                 lyricsButton = nil;
+                lx16_resetLyricsButtonPositionState();
             }
-            
+
             lyricsButton = [[UIButton alloc] init];
             lyricsButton.translatesAutoresizingMaskIntoConstraints = false;
-            
+
             [lyricsButton setTitle: @"LX" forState: UIControlStateNormal];
-            
+
             [lyricsButton setTitleColor: [[UIColor labelColor] colorWithAlphaComponent: 0.5] forState: UIControlStateNormal];
-            
+
             if (lyricsButton.titleLabel) {
                 lyricsButton.titleLabel.font = [UIFont systemFontOfSize: 24.0 weight: UIFontWeightBold];
             }
-            
+
             [self addSubview: lyricsButton];
-            
-            // If the view is higher due to an AirPlay volume bar,
-            // we need to move the button up so it doesn't overlap
-            if (self.bounds.size.height >= 170) {
-               lx16_lyricsButtonBottomConstraint = [lyricsButton.bottomAnchor constraintEqualToAnchor: self.bottomAnchor constant: -47];
-            } else {
-                lx16_lyricsButtonBottomConstraint = [lyricsButton.bottomAnchor constraintEqualToAnchor: self.bottomAnchor constant: -15];
-            }
-            
-            lx16_lyricsButtonBottomConstraint.active = true;
+
+            lx16_repinLyricsButtonVertically(self);
             [lyricsButton.leftAnchor constraintEqualToAnchor: self.leftAnchor constant: 24].active = true;
             
             presenter = [[LXScrollingLyricsViewControllerPresenter alloc] init];
@@ -855,6 +899,7 @@ bool lx16_activity_view_is_now_playing_view(CSActivityItemContentView* questione
         if (lyricsButton && self && self.subviews && [self.subviews containsObject: lyricsButton]) {
             [lyricsButton removeFromSuperview];
             lyricsButton = nil;
+            lx16_resetLyricsButtonPositionState();
         }
         
         %orig;
