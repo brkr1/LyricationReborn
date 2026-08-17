@@ -678,10 +678,6 @@ UILongPressGestureRecognizer *flowLongPressGestureRecognizer;
 
 // iOS 16
 
-NSLayoutConstraint* lx16_lyricsButtonBottomConstraint;
-NSLayoutConstraint* lx16_lyricsButtonCenterYConstraint;
-__weak UIButton* lx16_lyricsButtonPinnedNativeButton;
-
 // Marker-file-gated, same pattern already proven on IslandAura/SporeReborn/
 // IslandVolume/SpotiLoveReborn this cycle: touch
 // /var/mobile/Documents/LyricationRebornDebug.enable (Filza/SSH) to turn on,
@@ -751,111 +747,30 @@ bool lx16_activity_view_is_now_playing_view(CSActivityItemContentView* questione
     return isNowPlayingView;
 }
 
-// Recursively searches `view`'s descendants (skipping our own LX button) for
-// the leftmost native transport button. A debug dump confirmed the real
-// transport buttons aren't direct children of the content view - they're
-// nested inside a single wrapping UIView one level deeper - so this walks
-// the whole subtree instead of just the immediate children. Frames are
-// compared in `container`'s own coordinate space (via convertRect:toView:)
-// so nesting depth doesn't skew which candidate looks "leftmost".
-void lx16_searchLeftmostNativeControlButton(UIView *view, UIView *container, UIButton **outButton, CGFloat *minX) {
-    for (UIView *subview in [view.subviews copy]) {
-        if (subview == lyricsButton) continue;
-        if ([subview isKindOfClass: [UIButton class]]) {
-            UIButton *button = (UIButton *) subview;
-            NSString *title = [button currentTitle];
-            if (![title isEqualToString: @"LX"] && ![title isEqualToString: @"♥"] && ![title isEqualToString: @"♡"] && !CGRectIsEmpty(button.bounds)) {
-                CGRect frameInContainer = [button convertRect: button.bounds toView: container];
-                if (CGRectGetMinX(frameInContainer) < *minX) {
-                    *minX = CGRectGetMinX(frameInContainer);
-                    *outButton = button;
-                }
-            }
-        }
-        lx16_searchLeftmostNativeControlButton(subview, container, outButton, minX);
-    }
-}
+// A recursive subtree dump (same technique that found
+// SBSystemApertureContainerView for IslandAura's live-tracking fix) proved
+// the real transport buttons can't be found by view introspection at all:
+// MediaRemoteUI renders every player's controls into a remote scene
+// (_UIScenePresentationView -> _UISceneLayerHostContainerView) that
+// SpringBoard only composites, not local views - the walk reached the leaf
+// (_UITouchPassthroughView) with zero real buttons anywhere underneath.
+//
+// A fixed distance from the container's TOP is the only thing that survives
+// content appended below it (NextUp 3's Up Next row, or anything else
+// appended there in the future) - anchoring from the bottom broke the
+// moment anything grew the container from below, no matter what
+// threshold/offset pair was chosen. Pinned via a real Auto Layout
+// constraint to container.topAnchor so it never needs to be recomputed on
+// resize. This constant was cross-checked two ways: measuring a real
+// screenshot comparison (with/without NextUp 3, transport row sits at the
+// same absolute screen position in both) and reproducing the old,
+// previously-correct height-based formula's own output for the pre-NextUp3
+// settled height (198pt: 198 - 47 - 41 = 110). Matches SpotiLoveReborn's
+// heart button, which sits at the same offset. Not pixel-perfect science -
+// may need a small manual nudge after a real device test.
+static const CGFloat kLXTopOffset = 110.0;
 
-UIButton *lx16_leftmostNativeControlButton(UIView *container) {
-    UIButton *leftmost = nil;
-    CGFloat minX = CGFLOAT_MAX;
-    lx16_searchLeftmostNativeControlButton(container, container, &leftmost, &minX);
-    return leftmost;
-}
-
-// Full recursive subtree dump for the debug log - same technique that found
-// SBSystemApertureContainerView for IslandAura's live-tracking fix.
-void lx16_dumpViewTree(UIView *view, UIView *container, NSMutableString *dump, NSInteger depth) {
-    for (UIView *subview in [view.subviews copy]) {
-        NSString *indent = [@"" stringByPaddingToLength: depth * 2 withString: @" " startingAtIndex: 0];
-        CGRect frameInContainer = [subview convertRect: subview.bounds toView: container];
-        [dump appendFormat: @"%@%@ frame=%@ frameInContainer=%@", indent, NSStringFromClass([subview class]), NSStringFromCGRect(subview.frame), NSStringFromCGRect(frameInContainer)];
-        if ([subview isKindOfClass: [UIButton class]]) {
-            [dump appendFormat: @" title=%@", [(UIButton *) subview currentTitle]];
-        }
-        [dump appendString: @"\n"];
-        lx16_dumpViewTree(subview, container, dump, depth + 1);
-    }
-}
-
-// Pins LX's vertical center to the real transport button's own centerYAnchor
-// whenever that button can be found, so it tracks any future height change
-// (AirPlay's volume bar, NextUp 3's row, a Spotify layout update) instead of
-// guessing a fixed offset for each cause individually - the >= 170 threshold
-// below was calibrated for AirPlay specifically and broke the moment
-// NextUp 3 grew the container for a different reason. Only falls back to
-// that guess while no native button can be found yet (e.g. the very first
-// layout pass).
-void lx16_repinLyricsButtonVertically(UIView *container) {
-    if (!lyricsButton || ![container.subviews containsObject: lyricsButton]) {
-        return;
-    }
-
-    UIButton *nativeButton = lx16_leftmostNativeControlButton(container);
-
-    if (lx16_debugLoggingEnabled()) {
-        NSMutableString *dump = [NSMutableString stringWithFormat: @"repinLyricsButtonVertically: container=%@ bounds=%@\n", NSStringFromClass([container class]), NSStringFromCGRect(container.bounds)];
-        lx16_dumpViewTree(container, container, dump, 1);
-        [dump appendFormat: @"nativeButton=%@ frame=%@ alreadyPinned=%d\n", nativeButton, NSStringFromCGRect(nativeButton.frame), (nativeButton && lx16_lyricsButtonPinnedNativeButton == nativeButton)];
-        lx16_log(@"%@", dump);
-    }
-
-    if (nativeButton) {
-        if (lx16_lyricsButtonCenterYConstraint && lx16_lyricsButtonPinnedNativeButton == nativeButton) {
-            return;
-        }
-        if (lx16_lyricsButtonBottomConstraint) {
-            lx16_lyricsButtonBottomConstraint.active = false;
-            lx16_lyricsButtonBottomConstraint = nil;
-        }
-        if (lx16_lyricsButtonCenterYConstraint) {
-            lx16_lyricsButtonCenterYConstraint.active = false;
-        }
-        lx16_lyricsButtonCenterYConstraint = [lyricsButton.centerYAnchor constraintEqualToAnchor: nativeButton.centerYAnchor];
-        lx16_lyricsButtonCenterYConstraint.active = true;
-        lx16_lyricsButtonPinnedNativeButton = nativeButton;
-        return;
-    }
-
-    if (!lx16_lyricsButtonBottomConstraint) {
-        lx16_lyricsButtonBottomConstraint = [lyricsButton.bottomAnchor constraintEqualToAnchor: container.bottomAnchor constant: -15];
-        lx16_lyricsButtonBottomConstraint.active = true;
-    }
-    // If the view is higher due to an AirPlay volume bar,
-    // we need to move the button up so it doesn't overlap
-    lx16_lyricsButtonBottomConstraint.constant = (container.bounds.size.height >= 170) ? -47 : -15;
-}
-
-// Must run wherever lyricsButton itself is torn down (not just moved) - a
-// stale lx16_lyricsButtonPinnedNativeButton would otherwise make the repin
-// guard above think a freshly recreated button (after leaving and returning
-// to the now-playing view) is already correctly pinned, when the constraint
-// it's comparing against still belongs to the old, gone button.
-void lx16_resetLyricsButtonPositionState(void) {
-    lx16_lyricsButtonBottomConstraint = nil;
-    lx16_lyricsButtonCenterYConstraint = nil;
-    lx16_lyricsButtonPinnedNativeButton = nil;
-}
+NSLayoutConstraint* lx16_lyricsButtonTopConstraint;
 
 %hook CSActivityItemContentView
 
@@ -866,18 +781,6 @@ void lx16_resetLyricsButtonPositionState(void) {
         [presenter present];
     }
 
-    - (void) setFrame:(CGRect)newFrame {
-        %orig;
-
-        lx16_repinLyricsButtonVertically(self);
-    }
-
-    - (void) setBounds:(CGRect)newBounds {
-        %orig;
-
-        lx16_repinLyricsButtonVertically(self);
-    }
-
     - (void) layoutSubviews {
         %orig;
 
@@ -886,11 +789,8 @@ void lx16_resetLyricsButtonPositionState(void) {
         if (!isNowPlayingView && lyricsButton && [self.subviews containsObject: lyricsButton]) {
             [lyricsButton removeFromSuperview];
             lyricsButton = nil;
-            lx16_resetLyricsButtonPositionState();
-            return;
+            lx16_lyricsButtonTopConstraint = nil;
         }
-
-        lx16_repinLyricsButtonVertically(self);
     }
 
     - (void) didMoveToWindow {
@@ -910,7 +810,7 @@ void lx16_resetLyricsButtonPositionState(void) {
                 if (lyricsButton && [self.subviews containsObject: lyricsButton]) {
                     [lyricsButton removeFromSuperview];
                     lyricsButton = nil;
-                    lx16_resetLyricsButtonPositionState();
+                    lx16_lyricsButtonTopConstraint = nil;
                 }
                 
                 return;
@@ -918,7 +818,6 @@ void lx16_resetLyricsButtonPositionState(void) {
             
             if (lyricsButton) {
                 if ([self.subviews containsObject: lyricsButton]) {
-                    lx16_repinLyricsButtonVertically(self);
                     return;
                 }
 
@@ -929,7 +828,7 @@ void lx16_resetLyricsButtonPositionState(void) {
                 } @catch (id ignored) { }
 
                 lyricsButton = nil;
-                lx16_resetLyricsButtonPositionState();
+                lx16_lyricsButtonTopConstraint = nil;
             }
 
             lyricsButton = [[UIButton alloc] init];
@@ -945,9 +844,12 @@ void lx16_resetLyricsButtonPositionState(void) {
 
             [self addSubview: lyricsButton];
 
-            lx16_repinLyricsButtonVertically(self);
+            lx16_lyricsButtonTopConstraint = [lyricsButton.topAnchor constraintEqualToAnchor: self.topAnchor constant: kLXTopOffset];
+            lx16_lyricsButtonTopConstraint.active = true;
             [lyricsButton.leftAnchor constraintEqualToAnchor: self.leftAnchor constant: 24].active = true;
-            
+            lx16_log(@"created LX button, container bounds=%@, topOffset=%.1f", NSStringFromCGRect(self.bounds), kLXTopOffset);
+
+
             presenter = [[LXScrollingLyricsViewControllerPresenter alloc] init];
             presenter.twitterAlertAllowed = true;
             
@@ -963,9 +865,9 @@ void lx16_resetLyricsButtonPositionState(void) {
         if (lyricsButton && self && self.subviews && [self.subviews containsObject: lyricsButton]) {
             [lyricsButton removeFromSuperview];
             lyricsButton = nil;
-            lx16_resetLyricsButtonPositionState();
+            lx16_lyricsButtonTopConstraint = nil;
         }
-        
+
         %orig;
     }
 
