@@ -682,6 +682,37 @@ NSLayoutConstraint* lx16_lyricsButtonBottomConstraint;
 NSLayoutConstraint* lx16_lyricsButtonCenterYConstraint;
 __weak UIButton* lx16_lyricsButtonPinnedNativeButton;
 
+// Marker-file-gated, same pattern already proven on IslandAura/SporeReborn/
+// IslandVolume/SpotiLoveReborn this cycle: touch
+// /var/mobile/Documents/LyricationRebornDebug.enable (Filza/SSH) to turn on,
+// delete it to turn off, no respring needed.
+BOOL lx16_debugLoggingEnabled(void) {
+    return [[NSFileManager defaultManager] fileExistsAtPath: @"/var/mobile/Documents/LyricationRebornDebug.enable"];
+}
+
+void lx16_log(NSString *format, ...) {
+    if (!lx16_debugLoggingEnabled()) {
+        return;
+    }
+
+    va_list args;
+    va_start(args, format);
+    NSString *message = [[NSString alloc] initWithFormat: format arguments: args];
+    va_end(args);
+
+    NSString *line = [NSString stringWithFormat: @"[%@] %@\n", [NSDate date], message];
+    NSLog(@"[LyricationRebornDebug] %@", message);
+
+    NSString *path = @"/var/mobile/Documents/LyricationRebornDebug.log";
+    if (![[NSFileManager defaultManager] fileExistsAtPath: path]) {
+        [[NSFileManager defaultManager] createFileAtPath: path contents: nil attributes: nil];
+    }
+    NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath: path];
+    [handle seekToEndOfFile];
+    [handle writeData: [line dataUsingEncoding: NSUTF8StringEncoding]];
+    [handle closeFile];
+}
+
 @interface CSListItemActivityProvider: NSObject
     - (NSDictionary*) activityItemsByBundleId;
 @end
@@ -755,6 +786,19 @@ void lx16_repinLyricsButtonVertically(UIView *container) {
     }
 
     UIButton *nativeButton = lx16_leftmostNativeControlButton(container);
+
+    if (lx16_debugLoggingEnabled()) {
+        NSMutableString *dump = [NSMutableString stringWithFormat: @"repinLyricsButtonVertically: container=%@ bounds=%@\n", NSStringFromClass([container class]), NSStringFromCGRect(container.bounds)];
+        for (UIView *subview in [container.subviews copy]) {
+            [dump appendFormat: @"  subview class=%@ frame=%@", NSStringFromClass([subview class]), NSStringFromCGRect(subview.frame)];
+            if ([subview isKindOfClass: [UIButton class]]) {
+                [dump appendFormat: @" title=%@", [(UIButton *) subview currentTitle]];
+            }
+            [dump appendString: @"\n"];
+        }
+        [dump appendFormat: @"nativeButton=%@ frame=%@ alreadyPinned=%d\n", nativeButton, NSStringFromCGRect(nativeButton.frame), (nativeButton && lx16_lyricsButtonPinnedNativeButton == nativeButton)];
+        lx16_log(@"%@", dump);
+    }
 
     if (nativeButton) {
         if (lx16_lyricsButtonCenterYConstraint && lx16_lyricsButtonPinnedNativeButton == nativeButton) {
